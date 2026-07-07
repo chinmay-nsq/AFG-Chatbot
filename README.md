@@ -6,7 +6,8 @@ reverse proxy. No domain is used — the app is reached via the EC2 public IP.
 
 ## Stack
 
-- **App**: Flask + gunicorn (`afg_new.py`), containerized via `Dockerfile`
+- **App**: Flask + gunicorn (`afg_new.py`), containerized via `Dockerfile`,
+  running as a **single worker** (`--workers 1`, 8 threads)
 - **DB**: Postgres 16, containerized via `docker-compose.yml` (`afg_postgres` service)
 - **Proxy**: nginx (`nginx_afg.conf`) terminating on port 80, forwarding to the app
   container on `127.0.0.1:5050`
@@ -17,11 +18,10 @@ reverse proxy. No domain is used — the app is reached via the EC2 public IP.
 
 ## 1. Launch the EC2 instance
 
-- Ubuntu 22.04/24.04 LTS, **t2.micro** (free-tier eligible). Note: this is a
-  cost tradeoff, not a capacity recommendation — 1GB RAM is tight for
-  Postgres + gunicorn workers running together. Watch for OOM kills under load
-  (`dmesg` / `docker compose logs`); a swapfile (step 2a) helps but isn't a
-  substitute for more RAM if the app gets real traffic.
+- Ubuntu 22.04/24.04 LTS, **t3.small** (2GB RAM, 2 vCPU, burstable). Not
+  free-tier eligible (~$15-17/month on-demand), but gives comfortable headroom
+  for Postgres + gunicorn running together vs. t2.micro's 1GB. A swapfile
+  (step 1a) is optional insurance at this size rather than a necessity.
 - Security group inbound rules:
   - `22` (SSH) — restrict to your IP
   - `80` (HTTP) — `0.0.0.0/0`
@@ -30,11 +30,11 @@ reverse proxy. No domain is used — the app is reached via the EC2 public IP.
     the host, so they're not reachable externally even if you forget this rule,
     but keep the security group tight regardless.
 
-### 1a. (Recommended on t2.micro) Add a swapfile
+### 1a. (Optional on t3.small) Add a swapfile
 
-1GB RAM with no swap risks the OOM killer taking out Postgres or gunicorn
-under any memory pressure (e.g. `docker compose build`). A small swapfile is
-cheap insurance:
+2GB RAM gives comfortable headroom for Postgres + a single gunicorn worker,
+but a small swapfile is still cheap insurance against memory spikes (e.g.
+`docker compose build`):
 
 ```bash
 sudo fallocate -l 1G /swapfile
@@ -215,3 +215,24 @@ data transfer + 10M requests/month, free tier terms may vary) — for a
 low-traffic prototype this should cost close to $0/month, much cheaper than
 the ALB's ~$16-20/month hourly minimum. Watch data transfer if TTS audio
 volume grows, since audio streaming is more bytes than text chat.
+
+## Alternative considered: API Gateway (not used — breaks streaming)
+
+API Gateway (REST or HTTP API) can front EC2 the same way it fronts Lambda,
+via an **HTTP proxy integration** pointing at the EC2 public IP/DNS (or a VPC
+Link + Network Load Balancer if EC2 is private). Like CloudFront, it gives a
+free trusted HTTPS URL automatically
+(`https://xxxx.execute-api.<region>.amazonaws.com/<stage>`), no ACM or domain
+required.
+
+**Why it's not used here**: API Gateway buffers the full response before
+returning it to the client and does not support server-sent events — it also
+enforces a hard integration timeout (29s on REST APIs). Both
+`/chat-stream` (SSE) and `/tts` (chunked audio) rely on incremental streaming
+to the browser, which API Gateway would break. CloudFront was chosen instead
+because, with caching disabled on those two paths, it passes streaming
+responses through rather than buffering them.
+
+API Gateway would be a reasonable choice if these endpoints were reworked to
+be non-streaming (polling, or a WebSocket API for real-time use cases), but
+that's a larger change than fronting EC2 for HTTPS alone.

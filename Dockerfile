@@ -43,4 +43,4 @@ USER appuser
 
 EXPOSE 5050
 
-CMD ["gunicorn", "-k", "gthread", "--threads", "8", "--workers", "2", "--timeout", "120", "-b", "0.0.0.0:5050", "afg_new:app"]
+CMD ["gunicorn", "-k", "gthread", "--threads", "8", "--workers", "1", "--timeout", "120", "-b", "0.0.0.0:5050", "afg_new:app"]
