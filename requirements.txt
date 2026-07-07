@@ -1,0 +1,7 @@
+flask
+gunicorn
+requests
+python-dotenv
+psycopg2-binary
+openai
+cartesia
